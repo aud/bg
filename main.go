@@ -149,8 +149,8 @@ func currentTime() int64 {
 	return time.Now().Unix()
 }
 
-func hasPastTenMinutes() bool {
-	return currentTime()-savedTime() > 30
+func minutesSinceLastUpdate(min int64) bool {
+	return currentTime()-savedTime() > min*60
 }
 
 func savedTime() int64 {
@@ -217,7 +217,7 @@ func main() {
 	operation()
 
 	for {
-		if hasPastTenMinutes() {
+		if minutesSinceLastUpdate(10) {
 			operation()
 		}
 
