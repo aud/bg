@@ -14,6 +14,8 @@ import (
 
 var expectedCommand string
 var expectedArgs []string
+var expectedPath string
+var expectedReader io.Reader
 
 type MockDefaultClient struct {
 	resp string
@@ -164,5 +166,41 @@ func TestFetchImage(t *testing.T) {
 
 	if expectedData != actualData {
 		t.Errorf("Expected %s", actualData)
+	}
+}
+
+func mockCreate(path string) (*os.File, error) {
+	expectedPath = path
+	return &os.File{}, nil
+}
+
+func mockIoCopy(writer io.Writer, reader io.Reader) (int64, error) {
+	expectedReader = reader
+	return 0, nil
+}
+
+func TestWriteNewFile(t *testing.T) {
+	create = mockCreate
+	ioCopy = mockIoCopy
+
+	defer func() {
+		create = os.Create
+		ioCopy = io.Copy
+	}()
+
+	writeNewFile(
+		noopIoReaderCloser{bytes.NewBufferString("test")},
+		"some/path",
+	)
+
+	if expectedPath != "some/path" {
+		t.Errorf("Expected %s", expectedPath)
+	}
+
+	data := make([]byte, 4)
+	expectedReader.Read(data)
+
+	if string(data) != "test" {
+		t.Errorf("Expected %s", data)
 	}
 }

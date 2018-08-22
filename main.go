@@ -30,6 +30,8 @@ const (
 var (
 	getEnv  = os.Getenv
 	command = exec.Command
+	create  = os.Create
+	ioCopy  = io.Copy
 )
 
 type HttpClient interface {
@@ -128,7 +130,7 @@ func homePathWithFile(fileName string) string {
 }
 
 func writeNewFile(contents io.Reader, path string) {
-	file, err := os.Create(path)
+	file, err := create(path)
 
 	if err != nil {
 		panic(err)
@@ -136,7 +138,7 @@ func writeNewFile(contents io.Reader, path string) {
 
 	defer file.Close()
 
-	_, err = io.Copy(file, contents)
+	_, err = ioCopy(file, contents)
 
 	if err != nil {
 		panic(err)
