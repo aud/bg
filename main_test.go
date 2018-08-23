@@ -53,7 +53,11 @@ func mockExec(command string, args ...string) *exec.Cmd {
 }
 
 func mockGetEnv(key string) string {
-	return "home_path"
+	if key == "HOME" {
+		return "home_path"
+	}
+
+	panic(fmt.Sprintf("Key not implemented: %s", key))
 }
 
 func mockCreate(path string) (*os.File, error) {
