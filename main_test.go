@@ -52,8 +52,8 @@ func mockExec(command string, args ...string) *exec.Cmd {
 	return &exec.Cmd{}
 }
 
-func SetGetenv(f func(key string) string) {
-	getEnv = f
+func mockGetEnv(key string) string {
+	return "home_path"
 }
 
 func mockCreate(path string) (*os.File, error) {
@@ -105,20 +105,13 @@ func TestRefreshDock(t *testing.T) {
 }
 
 func TestHomePath(t *testing.T) {
+	getEnv = mockGetEnv
+
 	defer func() {
 		getEnv = os.Getenv
 	}()
 
-	var expectedValue = "value"
-
-	SetGetenv(func(key string) string {
-		switch key {
-		case "HOME":
-			return expectedValue
-		default:
-			return ""
-		}
-	})
+	var expectedValue = "home_path"
 
 	actualValue := homePath()
 
@@ -128,18 +121,11 @@ func TestHomePath(t *testing.T) {
 }
 
 func TestDesktopDbPath(t *testing.T) {
+	getEnv = mockGetEnv
+
 	defer func() {
 		getEnv = os.Getenv
 	}()
-
-	SetGetenv(func(key string) string {
-		switch key {
-		case "HOME":
-			return "home_path"
-		default:
-			return ""
-		}
-	})
 
 	var expectedPath = "home_path/Library/Application Support/Dock/desktoppicture.db"
 	actualPath := desktopDbPath()
@@ -256,6 +242,7 @@ func TestHomePathWithFile(t *testing.T) {
 	stat = mockStat
 	isNotExist = mockIsNotExist
 	mkdir = mockMkdir
+	getEnv = mockGetEnv
 
 	defer func() {
 		stat = os.Stat
@@ -263,17 +250,6 @@ func TestHomePathWithFile(t *testing.T) {
 		mkdir = os.Mkdir
 		getEnv = os.Getenv
 	}()
-
-	var expectedValue = "home_path"
-
-	SetGetenv(func(key string) string {
-		switch key {
-		case "HOME":
-			return expectedValue
-		default:
-			return ""
-		}
-	})
 
 	actualPath := homePathWithFile("main.png")
 	var expectedPath = "home_path/bg/main.png"
@@ -344,22 +320,15 @@ func TestMinutesSinceLastUpdate(t *testing.T) {
 }
 
 func TestUpdateDesktopImage(t *testing.T) {
-	db, mock, _ := sqlmock.New()
-
-	defer db.Close()
+	getEnv = mockGetEnv
 
 	defer func() {
 		getEnv = os.Getenv
 	}()
 
-	SetGetenv(func(key string) string {
-		switch key {
-		case "HOME":
-			return "home_path"
-		default:
-			return ""
-		}
-	})
+	db, mock, _ := sqlmock.New()
+
+	defer db.Close()
 
 	expect := mock.ExpectExec("UPDATE DATA SET VALUE = \\$1")
 	expect.WithArgs("home_path/bg/main.png")
