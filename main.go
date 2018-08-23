@@ -21,6 +21,10 @@ type UnsplashLinks struct {
 
 type Headers map[string]string
 
+type HttpClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 const (
 	accessKey           = ""
 	lastUpdatedFileName = "last_updated_time.txt"
@@ -28,15 +32,16 @@ const (
 )
 
 var (
-	getEnv  = os.Getenv
-	command = exec.Command
-	create  = os.Create
-	ioCopy  = io.Copy
+	command     = exec.Command
+	create      = os.Create
+	getEnv      = os.Getenv
+	ioCopy      = io.Copy
+	isNotExist  = os.IsNotExist
+	mkdir       = os.Mkdir
+	stat        = os.Stat
+	writeString = io.WriteString
+	readFile    = ioutil.ReadFile
 )
-
-type HttpClient interface {
-	Do(req *http.Request) (*http.Response, error)
-}
 
 func get(uri string, client HttpClient, headers ...Headers) []byte {
 	req, err := http.NewRequest("GET", uri, nil)
@@ -87,16 +92,8 @@ func fetchImage(uri string, client HttpClient) []byte {
 	return get(uri, client)
 }
 
-func updateDesktopImage() {
-	db, err := sql.Open("sqlite3", desktopDbPath())
-
-	if err != nil {
-		panic(err)
-	}
-
-	defer db.Close()
-
-	_, err = db.Exec("UPDATE DATA SET VALUE = $1", homePathWithFile(imgFileName))
+func updateDesktopImage(db *sql.DB) {
+	_, err := db.Exec("UPDATE DATA SET VALUE = $1", homePathWithFile(imgFileName))
 
 	if err != nil {
 		panic(err)
@@ -122,8 +119,8 @@ func desktopDbPath() string {
 func homePathWithFile(fileName string) string {
 	home := fmt.Sprintf("%s/bg", homePath())
 
-	if _, err := os.Stat(home); os.IsNotExist(err) {
-		os.Mkdir(home, 0700)
+	if _, err := stat(home); isNotExist(err) {
+		mkdir(home, 0700)
 	}
 
 	return fmt.Sprintf("%s/%s", home, fileName)
@@ -154,24 +151,13 @@ func minutesSinceLastUpdate(min int64) bool {
 }
 
 func savedTime() int64 {
-	file, err := os.Open(homePathWithFile(lastUpdatedFileName))
+	file, err := readFile(homePathWithFile(lastUpdatedFileName))
 
 	if err != nil {
 		panic(err)
 	}
 
-	// Bit excessive but its cheap
-	buf := make([]byte, 50)
-
-	_, err = file.Read(buf)
-
-	if err != nil {
-		panic(err)
-	}
-
-	// Strip excess bytes and convert to int64
-	trimmed := bytes.Trim(buf, "\x00")
-	i, err := strconv.ParseInt(string(trimmed), 10, 64)
+	i, err := strconv.ParseInt(string(file), 10, 64)
 
 	if err != nil {
 		panic(err)
@@ -181,7 +167,7 @@ func savedTime() int64 {
 }
 
 func saveCurrentTime() {
-	file, err := os.Create(homePathWithFile(lastUpdatedFileName))
+	file, err := create(homePathWithFile(lastUpdatedFileName))
 
 	if err != nil {
 		panic(err)
@@ -189,7 +175,7 @@ func saveCurrentTime() {
 
 	defer file.Close()
 
-	_, err = io.WriteString(file, fmt.Sprintf("%v", currentTime()))
+	_, err = writeString(file, fmt.Sprintf("%v", currentTime()))
 
 	if err != nil {
 		panic(err)
@@ -206,7 +192,15 @@ func main() {
 			homePathWithFile(imgFileName),
 		)
 
-		updateDesktopImage()
+		db, err := sql.Open("sqlite3", desktopDbPath())
+
+		if err != nil {
+			panic(err)
+		}
+
+		defer db.Close()
+
+		updateDesktopImage(db)
 		saveCurrentTime()
 
 		if err := refreshDock(); err != nil {

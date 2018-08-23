@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
-	// "fmt"
+	"fmt"
+	"gopkg.in/DATA-DOG/go-sqlmock.v1"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -16,6 +19,9 @@ var expectedCommand string
 var expectedArgs []string
 var expectedPath string
 var expectedReader io.Reader
+var expectedDir string
+var expectedPermission string
+var expectedWriteString int64
 
 type MockDefaultClient struct {
 	resp string
@@ -39,7 +45,7 @@ func (c *MockDefaultClient) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func fakeExec(command string, args ...string) *exec.Cmd {
+func mockExec(command string, args ...string) *exec.Cmd {
 	expectedCommand = command
 	expectedArgs = args
 
@@ -50,12 +56,42 @@ func SetGetenv(f func(key string) string) {
 	getEnv = f
 }
 
+func mockCreate(path string) (*os.File, error) {
+	expectedPath = path
+	return &os.File{}, nil
+}
+
+func mockIoCopy(writer io.Writer, reader io.Reader) (int64, error) {
+	expectedReader = reader
+	return 0, nil
+}
+
+func mockWriteString(writer io.Writer, str string) (int, error) {
+	expectedWriteString, _ = strconv.ParseInt(str, 10, 64)
+	return 1, nil
+}
+
+func mockStat(path string) (os.FileInfo, error) {
+	return *new(os.FileInfo), nil
+}
+
+func mockIsNotExist(err error) bool {
+	return true
+}
+
+func mockMkdir(dir string, permission os.FileMode) error {
+	expectedDir = dir
+	expectedPermission = string(permission)
+
+	return nil
+}
+
 func TestRefreshDock(t *testing.T) {
 	defer func() {
 		command = exec.Command
 	}()
 
-	command = fakeExec
+	command = mockExec
 
 	refreshDock()
 
@@ -92,11 +128,32 @@ func TestHomePath(t *testing.T) {
 }
 
 func TestDesktopDbPath(t *testing.T) {
-	var expectedPath = "/Users/elliotdohm/Library/Application Support/Dock/desktoppicture.db"
+	defer func() {
+		getEnv = os.Getenv
+	}()
+
+	SetGetenv(func(key string) string {
+		switch key {
+		case "HOME":
+			return "home_path"
+		default:
+			return ""
+		}
+	})
+
+	var expectedPath = "home_path/Library/Application Support/Dock/desktoppicture.db"
 	actualPath := desktopDbPath()
 
 	if expectedPath != actualPath {
 		t.Errorf("Expected %s", actualPath)
+	}
+}
+
+func mockReadFile(t string) func(string) ([]byte, error) {
+	return func(path string) ([]byte, error) {
+		expectedPath = path
+
+		return []byte(t), nil
 	}
 }
 
@@ -169,16 +226,6 @@ func TestFetchImage(t *testing.T) {
 	}
 }
 
-func mockCreate(path string) (*os.File, error) {
-	expectedPath = path
-	return &os.File{}, nil
-}
-
-func mockIoCopy(writer io.Writer, reader io.Reader) (int64, error) {
-	expectedReader = reader
-	return 0, nil
-}
-
 func TestWriteNewFile(t *testing.T) {
 	create = mockCreate
 	ioCopy = mockIoCopy
@@ -202,5 +249,121 @@ func TestWriteNewFile(t *testing.T) {
 
 	if string(data) != "test" {
 		t.Errorf("Expected %s", data)
+	}
+}
+
+func TestHomePathWithFile(t *testing.T) {
+	stat = mockStat
+	isNotExist = mockIsNotExist
+	mkdir = mockMkdir
+
+	defer func() {
+		stat = os.Stat
+		isNotExist = os.IsNotExist
+		mkdir = os.Mkdir
+		getEnv = os.Getenv
+	}()
+
+	var expectedValue = "home_path"
+
+	SetGetenv(func(key string) string {
+		switch key {
+		case "HOME":
+			return expectedValue
+		default:
+			return ""
+		}
+	})
+
+	actualPath := homePathWithFile("main.png")
+	var expectedPath = "home_path/bg/main.png"
+
+	if expectedPath != actualPath {
+		t.Errorf("Expected %s", actualPath)
+	}
+
+	if expectedDir != "home_path/bg" {
+		t.Errorf("Expected %s", expectedDir)
+	}
+}
+
+func TestSaveCurrentTime(t *testing.T) {
+	create = mockCreate
+	writeString = mockWriteString
+
+	defer func() {
+		create = os.Create
+		writeString = io.WriteString
+	}()
+
+	saveCurrentTime()
+
+	expectedTime := time.Now().Unix()
+
+	if expectedTime-expectedWriteString > 5 {
+		t.Errorf("Expected %v", expectedWriteString)
+	}
+}
+
+func TestSavedTime(t *testing.T) {
+	readFile = mockReadFile("1535006022")
+
+	defer func() {
+		readFile = ioutil.ReadFile
+	}()
+
+	st := savedTime()
+
+	if st != int64(1535006022) {
+		t.Errorf("Expected %v", st)
+	}
+}
+
+func TestMinutesSinceLastUpdate(t *testing.T) {
+	defer func() {
+		readFile = ioutil.ReadFile
+	}()
+
+	elevenMinsAgo := time.Now().Unix() - 11*60
+
+	readFile = mockReadFile(fmt.Sprintf("%v", elevenMinsAgo))
+	hasPast := minutesSinceLastUpdate(10)
+
+	if hasPast != true {
+		t.Errorf("Expected %v", hasPast)
+	}
+
+	nineMinsAgo := time.Now().Unix() - 9*60
+
+	readFile = mockReadFile(fmt.Sprintf("%v", nineMinsAgo))
+	hasPast = minutesSinceLastUpdate(10)
+
+	if hasPast != false {
+		t.Errorf("Expected %v", hasPast)
+	}
+}
+
+func TestUpdateDesktopImage(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+
+	defer db.Close()
+
+	SetGetenv(func(key string) string {
+		switch key {
+		case "HOME":
+			return "home_path"
+		default:
+			return ""
+		}
+	})
+
+	expect := mock.ExpectExec("UPDATE DATA SET VALUE = \\$1")
+	expect.WithArgs("home_path/bg/main.png")
+	expect.WillReturnResult(sqlmock.NewResult(1, 1))
+
+	updateDesktopImage(db)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("Unsatisfied expectations %s", err)
 	}
 }
