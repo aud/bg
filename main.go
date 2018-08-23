@@ -211,7 +211,7 @@ func main() {
 	operation()
 
 	for {
-		if minutesSinceLastUpdate(10) {
+		if minutesSinceLastUpdate(720) {
 			operation()
 		}
 

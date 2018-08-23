@@ -15,14 +15,6 @@ import (
 	"time"
 )
 
-var expectedCommand string
-var expectedArgs []string
-var expectedPath string
-var expectedReader io.Reader
-var expectedDir string
-var expectedPermission string
-var expectedWriteString int64
-
 type MockDefaultClient struct {
 	resp string
 }
@@ -45,13 +37,6 @@ func (c *MockDefaultClient) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func mockExec(command string, args ...string) *exec.Cmd {
-	expectedCommand = command
-	expectedArgs = args
-
-	return &exec.Cmd{}
-}
-
 func mockGetEnv(key string) string {
 	if key == "HOME" {
 		return "home_path"
@@ -60,19 +45,25 @@ func mockGetEnv(key string) string {
 	panic(fmt.Sprintf("Key not implemented: %s", key))
 }
 
-func mockCreate(path string) (*os.File, error) {
-	expectedPath = path
-	return &os.File{}, nil
+func mockCreate(ep *string) func(string) (*os.File, error) {
+	return func(path string) (*os.File, error) {
+		*ep = path
+		return &os.File{}, nil
+	}
 }
 
-func mockIoCopy(writer io.Writer, reader io.Reader) (int64, error) {
-	expectedReader = reader
-	return 0, nil
+func mockIoCopy(er *io.Reader) func(io.Writer, io.Reader) (int64, error) {
+	return func(writer io.Writer, reader io.Reader) (int64, error) {
+		*er = reader
+		return 0, nil
+	}
 }
 
-func mockWriteString(writer io.Writer, str string) (int, error) {
-	expectedWriteString, _ = strconv.ParseInt(str, 10, 64)
-	return 1, nil
+func mockWriteString(ws *int64) func(io.Writer, string) (int, error) {
+	return func(writer io.Writer, str string) (int, error) {
+		*ws, _ = strconv.ParseInt(str, 10, 64)
+		return 1, nil
+	}
 }
 
 func mockStat(path string) (os.FileInfo, error) {
@@ -83,11 +74,24 @@ func mockIsNotExist(err error) bool {
 	return true
 }
 
-func mockMkdir(dir string, permission os.FileMode) error {
-	expectedDir = dir
-	expectedPermission = string(permission)
+func mockReadFile(t string) func(string) ([]byte, error) {
+	return func(path string) ([]byte, error) {
+		return []byte(t), nil
+	}
+}
 
-	return nil
+func mockMkdir(ed *string) func(string, os.FileMode) error {
+	return func(dir string, permission os.FileMode) error {
+		*ed = dir
+		return nil
+	}
+}
+
+func mockExec(c *string, a *[]string) func(string, ...string) *exec.Cmd {
+	return func(command string, args ...string) *exec.Cmd {
+		*c, *a = command, args
+		return &exec.Cmd{}
+	}
 }
 
 func TestRefreshDock(t *testing.T) {
@@ -95,16 +99,19 @@ func TestRefreshDock(t *testing.T) {
 		command = exec.Command
 	}()
 
-	command = mockExec
+	var c string
+	var a []string
+
+	command = mockExec(&c, &a)
 
 	refreshDock()
 
-	if "sh" != expectedCommand {
-		t.Errorf("Expected %s", expectedCommand)
+	if "sh" != c {
+		t.Errorf("Expected %s", c)
 	}
 
-	if reflect.DeepEqual([]string{"-c", "killall Dock"}, expectedArgs) == false {
-		t.Errorf("Expected %s", expectedArgs)
+	if reflect.DeepEqual([]string{"-c", "killall Dock"}, a) == false {
+		t.Errorf("Expected %s", a)
 	}
 }
 
@@ -136,14 +143,6 @@ func TestDesktopDbPath(t *testing.T) {
 
 	if expectedPath != actualPath {
 		t.Errorf("Expected %s", actualPath)
-	}
-}
-
-func mockReadFile(t string) func(string) ([]byte, error) {
-	return func(path string) ([]byte, error) {
-		expectedPath = path
-
-		return []byte(t), nil
 	}
 }
 
@@ -217,8 +216,11 @@ func TestFetchImage(t *testing.T) {
 }
 
 func TestWriteNewFile(t *testing.T) {
-	create = mockCreate
-	ioCopy = mockIoCopy
+	var ep string
+	create = mockCreate(&ep)
+
+	var er io.Reader
+	ioCopy = mockIoCopy(&er)
 
 	defer func() {
 		create = os.Create
@@ -230,12 +232,12 @@ func TestWriteNewFile(t *testing.T) {
 		"some/path",
 	)
 
-	if expectedPath != "some/path" {
-		t.Errorf("Expected %s", expectedPath)
+	if ep != "some/path" {
+		t.Errorf("Expected %s", ep)
 	}
 
 	data := make([]byte, 4)
-	expectedReader.Read(data)
+	er.Read(data)
 
 	if string(data) != "test" {
 		t.Errorf("Expected %s", data)
@@ -243,9 +245,11 @@ func TestWriteNewFile(t *testing.T) {
 }
 
 func TestHomePathWithFile(t *testing.T) {
+	var ed string
+	mkdir = mockMkdir(&ed)
+
 	stat = mockStat
 	isNotExist = mockIsNotExist
-	mkdir = mockMkdir
 	getEnv = mockGetEnv
 
 	defer func() {
@@ -262,14 +266,17 @@ func TestHomePathWithFile(t *testing.T) {
 		t.Errorf("Expected %s", actualPath)
 	}
 
-	if expectedDir != "home_path/bg" {
-		t.Errorf("Expected %s", expectedDir)
+	if ed != "home_path/bg" {
+		t.Errorf("Expected %s", ed)
 	}
 }
 
 func TestSaveCurrentTime(t *testing.T) {
-	create = mockCreate
-	writeString = mockWriteString
+	var x string
+	create = mockCreate(&x)
+
+	var ws int64
+	writeString = mockWriteString(&ws)
 
 	defer func() {
 		create = os.Create
@@ -280,8 +287,8 @@ func TestSaveCurrentTime(t *testing.T) {
 
 	expectedTime := time.Now().Unix()
 
-	if expectedTime-expectedWriteString > 5 {
-		t.Errorf("Expected %v", expectedWriteString)
+	if expectedTime-ws > 5 {
+		t.Errorf("Expected %v", ws)
 	}
 }
 
