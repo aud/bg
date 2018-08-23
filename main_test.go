@@ -348,6 +348,10 @@ func TestUpdateDesktopImage(t *testing.T) {
 
 	defer db.Close()
 
+	defer func() {
+		getEnv = os.Getenv
+	}()
+
 	SetGetenv(func(key string) string {
 		switch key {
 		case "HOME":
